@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { ShoppingBag, Menu, X, Send, Sparkles, ChevronRight, Star } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { useChat } from "@ai-sdk/react";
+import { ShoppingBag, Menu, X, Send, Sparkles, ChevronRight, Star, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -358,19 +359,37 @@ function AIStylistButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+import type { UIMessage } from "ai";
+
+const WELCOME_MESSAGE: UIMessage = {
+  id: "welcome",
+  role: "assistant",
+  parts: [{ type: "text", text: "Olá! Sou o AI Stylist da Urbô. Me conta: qual é a ocasião? Trabalho, casual ou evento especial?" }],
+};
+
 function AIStylistModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [messages, setMessages] = useState(AI_MESSAGES);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState("");
 
-  const send = () => {
-    if (!input.trim()) return;
-    const userMsg = { from: "user", text: input };
-    const aiReply = {
-      from: "ai",
-      text: "Ótima escolha! Com base no seu estilo, também recomendo nossa **Camisa Social Manga Curta** em linho natural — versátil para várias ocasiões. Posso montar um look completo para você?",
-    };
-    setMessages((prev) => [...prev, userMsg, aiReply]);
+  const { messages, sendMessage, status, setMessages } = useChat({
+    messages: [WELCOME_MESSAGE],
+  });
+
+  const isLoading = status === "streaming" || status === "submitted";
+
+  useEffect(() => {
+    if (!open) setMessages([WELCOME_MESSAGE]);
+  }, [open, setMessages]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text || isLoading) return;
     setInput("");
+    sendMessage({ text });
   };
 
   return (
@@ -392,8 +411,8 @@ function AIStylistModal({ open, onClose }: { open: boolean; onClose: () => void 
               <p className="text-[#8b7355] text-[11px] tracking-wide">Monte seu look perfeito</p>
             </div>
             <div className="ml-auto flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-[10px] text-[#8b7355]">Online</span>
+              <div className={`w-2 h-2 rounded-full ${isLoading ? "bg-yellow-400 animate-pulse" : "bg-green-400"}`} />
+              <span className="text-[10px] text-[#8b7355]">{isLoading ? "Digitando..." : "Online"}</span>
             </div>
           </div>
         </SheetHeader>
@@ -401,27 +420,43 @@ function AIStylistModal({ open, onClose }: { open: boolean; onClose: () => void 
         {/* Messages */}
         <ScrollArea className="flex-1 px-4 py-5">
           <div className="flex flex-col gap-4">
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"}`}
-              >
-                {msg.from === "ai" && (
-                  <div className="w-7 h-7 bg-[#8b7355] flex items-center justify-center shrink-0 mr-2 mt-0.5">
-                    <Sparkles size={12} className="text-white" />
+            {messages.map((msg) => {
+              const text = msg.parts
+                .filter((p): p is { type: "text"; text: string } => p.type === "text")
+                .map((p) => p.text)
+                .join("");
+              if (!text) return null;
+              return (
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {msg.role === "assistant" && (
+                    <div className="w-7 h-7 bg-[#8b7355] flex items-center justify-center shrink-0 mr-2 mt-0.5">
+                      <Sparkles size={12} className="text-white" />
+                    </div>
+                  )}
+                  <div
+                    className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
+                      msg.role === "user"
+                        ? "bg-[#1a1a1a] text-[#e8dcc8]"
+                        : "bg-white text-[#2c2c2c] border border-[#e0d9cc]"
+                    }`}
+                  >
+                    {text}
                   </div>
-                )}
-                <div
-                  className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
-                    msg.from === "user"
-                      ? "bg-[#1a1a1a] text-[#e8dcc8]"
-                      : "bg-white text-[#2c2c2c] border border-[#e0d9cc]"
-                  }`}
-                >
-                  {msg.text}
+                </div>
+              );
+            })}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="w-7 h-7 bg-[#8b7355] flex items-center justify-center shrink-0 mr-2 mt-0.5">
+                  <Sparkles size={12} className="text-white" />
+                </div>
+                <div className="bg-white border border-[#e0d9cc] px-4 py-3 flex items-center gap-1.5">
+                  <Loader2 size={13} className="animate-spin text-[#8b7355]" />
+                  <span className="text-xs text-[#a09070]">Montando seu look...</span>
                 </div>
               </div>
-            ))}
+            )}
+            <div ref={bottomRef} />
           </div>
         </ScrollArea>
 
@@ -432,19 +467,21 @@ function AIStylistModal({ open, onClose }: { open: boolean; onClose: () => void 
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              disabled={isLoading}
               placeholder="Me pergunte sobre looks..."
-              className="flex-1 bg-[#f7f3ed] border border-[#e0d9cc] px-4 py-2.5 text-sm text-[#1a1a1a] placeholder:text-[#a09070] outline-none focus:border-[#8b7355] transition-colors"
+              className="flex-1 bg-[#f7f3ed] border border-[#e0d9cc] px-4 py-2.5 text-sm text-[#1a1a1a] placeholder:text-[#a09070] outline-none focus:border-[#8b7355] transition-colors disabled:opacity-50"
             />
             <button
-              onClick={send}
-              className="bg-[#1a1a1a] text-white px-4 hover:bg-[#8b7355] transition-colors"
+              onClick={handleSend}
+              disabled={isLoading || !input.trim()}
+              className="bg-[#1a1a1a] text-white px-4 hover:bg-[#8b7355] transition-colors disabled:opacity-40"
             >
               <Send size={15} />
             </button>
           </div>
           <p className="text-[10px] text-[#a09070] mt-2 text-center tracking-wide">
-            IA com base no seu histórico e preferências
+            Powered by Urbô AI · GPT-4o mini
           </p>
         </div>
       </SheetContent>
